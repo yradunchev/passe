@@ -1,6 +1,7 @@
-# passe
+# WORK IN PROGRESS
 
-## Password manager for the command line
+## passe
+### Password manager for the command line
 
 - bash script
 - store credential detals in gpg encrypted file
