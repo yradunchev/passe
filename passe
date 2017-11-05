@@ -13,58 +13,95 @@
 #      REVISION:  ---
 #===============================================================================
 
-#set -o nounset                              # Treat unset variables as an error
+set -euf -o pipefail
+shopt -s failglob
 
-#-------------------------------------------------------------------------------
-# Configuration zone. Edit to suit your needs.
-#-------------------------------------------------------------------------------
+#  GLOBAL DECLARATIONS & CONFIGURATIONS  =======================================
 readonly pwdf=${HOME}/.passlist 
 
-#-------------------------------------------------------------------------------
-# End of Configuration. Don not edit anything pass this line!
-#-------------------------------------------------------------------------------
+#  End of Configuration. Don not edit anything pass this line!  ================
 
-#-------------------------------------------------------------------------------
-# Functions
-#-------------------------------------------------------------------------------
+#  FUNCTION DEFINITIONS  =======================================================
 
-p_env_check() { 
-  for app in {gpg,xclip,sed}; do                        #  list of tools we need
+# Helpers
+
+h_yesno() {
+  [[ -t 0 ]] || return 0
+  local response
+  read -r -p "$1 [y/N] " response
+  [[ $response == [yY] ]] || exit 1
+}
+
+h_die() {
+  [ -z "${1}" ] && return 1
+  printf "%b\\n" "$(expr "${0}" : '.*/\([^/]*\)'): ${*}" >&2
+  exit 1
+}
+
+h_workdir() {
+  [[ -n $workdir ]] && return
+  local template="$program.XXXXXXXXXXXXX"
+  if [[ -d /dev/shm && -w /dev/shm && -x /dev/shm ]]; then
+    workdir="$(mktemp -d "/dev/shm/$template")"
+    remove_tmpfile() {
+    rm -rf "$workdir"
+    }
+    trap remove_tmpfile INT TERM EXIT
+  else
+    workdir="$(mktemp -d "${tmpdir:-/tmp}/$template")"
+    shred_tmpfile() {
+    find "$workdir" -type f -exec "$shred" {} +
+    rm -rf "$workdir"
+    }
+    trap shred_tmpfile INT TERM EXIT
+  fi
+}
+
+h_env_chck_set() { 
+  for app in {gpg,xclip,sed,shred}; do                 #  list of tools we need
     command -v ${app} >/dev/null 2>&1 || { echo >&2 "${app} missing.";exit 1; }
   done
-}                         # ----------  end of function p_env_checks  ----------
+  readonly shred="shred -f -z"
+  readonly gpg="gpg -qd"
+}                         # ---------- end of function h_env_chck_set ----------
 
-p_usage() {
-  echo -e "\n\tUsage:  ${0##/*/} File\n"
-  exit 1
-}                             # ----------  end of function p_usage   ----------
+h_usage() {
+  cat <<EOF
+usage: foobar [-x] [-v] [-z] [file ...]
+A short explanation of the operation goes here.
+It might be a few lines long, but shouldn't be excessive.
+EOF
+}                                # ---------- end of function h_usage ----------
 
-p_labl_check() {
+
+# Functions
+
+f_labl_check() {
   [[ -z "${labl}" ]] && { p_usage;exit 1; }  
-  gpg -qd ${pwdf} | grep --quiet ${labl} && return 0 || return 1
-}                         #  ----------  end of function p_lbl_check  ----------
+  ${gpg} "${pwdf}" | grep --quiet "${labl}" && return 0 || return 1
+}                         #  ----------  end of function f_lbl_check  ----------
 
-p_ls_labels() {
-  mapfile -t entr < <(gpg -qd ${pwdf} | grep ^[^:] -)
+f_ls_labels() {
+  mapfile -t entr < <(${gpg} "${pwdf}" | grep "^[^:]" -)
   printf '%s\n' "${entr[@]}"
-}                         # ----------  end of function p_read_labels ----------
+}                         # ----------  end of function f_read_labels ----------
 
-p_copy_password() {  
-  $(p_labl_check) || { echo >&2 "No such record.";exit 1; }
-  gpg -qd ${pwdf} |\
+f_copy_password() {  
+  f_labl_check || { echo >&2 "No such record.";exit 1; }
+  ${gpg} "${pwdf}" |\
     sed -n -e "/${labl}/{n;p;}" |\
     cut -d: -f3 |\
     xclip -r -selection clipboard
-}                      # ----------  end of function p_copy_password  ----------
+}                      # ----------  end of function f_copy_password  ----------
 
-p_show_entry() {  
-  $(p_labl_check) || { echo >&2 "No such record.";exit 1; }
-  gpg -qd ${pwdf} | grep -A 5 ${labl}
-}                     # ----------  end of function p_copy_password   ----------
+f_show_entry() {  
+  f_labl_check || { echo >&2 "No such record.";exit 1; }
+  ${gpg} "${pwdf}" | grep -A 5 "${labl}"
+}                     # ----------  end of function f_copy_password   ----------
 
-p_create_label() {
-  $(p_labl_check) && { echo >&2 "Entry already exists.";exit 1; }
-  cat << EOF > ${pwdf}
+f_create_label() {
+  f_labl_check && { echo >&2 "Entry already exists.";exit 1; }
+  cat << EOF > "${pwdf}"
 ${labl}
 :pass:${pass}
 :login:${logn}
@@ -72,19 +109,22 @@ ${labl}
 :key:${KEYY}
 :timestamp:${stmp}
 EOF
-}                       # ----------  end of function p_create_label  ----------
+}                       # ----------  end of function f_create_label  ----------
 
 main() {
-  p_env_check
-  [[ $# -lt 1 ]] && { p_ls_labels; exit 1; }      #  default to ls if no options
-  cmdl=$1
-  labl=$2
+  h_env_chck_set
+  [[ $# -lt 1 ]] && { f_ls_labels; exit 1; }      #  default to ls if no options
+  readonly program="${0##*/}"
+  readonly cmdl=$1
+  readonly labl=$2
   case $cmdl in
-    ls) p_ls_labels ;;
-    show) p_show_entry ;;
-    copy) p_copy_password ;;
-    *) p_usage ;;
+    ls) f_ls_labels ;;
+    show) f_show_entry ;;
+    copy) f_copy_password ;;
+    *) h_usage ;;
   esac
 }                                   # ----------  end of function main ----------
+
+#  ==============================================================================
 
 main "$@"
